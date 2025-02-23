@@ -5,7 +5,11 @@ from sagemaker.predictor import Predictor
 from sagemaker.serializers import IdentitySerializer
 from sagemaker.deserializers import JSONDeserializer
 import os
+import subprocess
+import tempfile
+import tarfile
 import json
+from pathlib import Path
 
 
 def query(model_predictor, image_file_name):
@@ -23,16 +27,15 @@ def query(model_predictor, image_file_name):
 
 
 def parse_response(query_response):
-    model_predictions = json.loads(query_response)
-    with open("query_response.json", "w") as outfile:
-        json.dump(model_predictions, outfile)
+    # with open("query_response.json", "w") as outfile:
+    #     json.dump(model_predictions, outfile)
 
     normalized_boxes, classes, scores = (
-        model_predictions["normalized_boxes"],
-        model_predictions["classes"],
-        model_predictions["scores"],
+        query_response["normalized_boxes"],
+        query_response["classes"],
+        query_response["scores"],
     )
-    # Filter predictions with scores >= 0.5
+    # take predictions with scores >= 0.5 only
     high_confidence_mask = [score >= 0.5 for score in scores]
     normalized_boxes = [
         box for box, keep in zip(normalized_boxes, high_confidence_mask) if keep
@@ -40,7 +43,24 @@ def parse_response(query_response):
     classes = [cls for cls, keep in zip(classes, high_confidence_mask) if keep]
     scores = [score for score, keep in zip(scores, high_confidence_mask) if keep]
 
-    return normalized_boxes, classes, scores
+    temp_dir = tempfile.mkdtemp()
+    model_dir = os.path.join(temp_dir, "model.tar.gz")
+    subprocess.run(
+            ["aws", "s3", "cp", os.environ["S3_MODEL_URI"], model_dir, "--quiet"],
+            check=True,
+        )
+    
+    unzipped_model_dir = Path(temp_dir) / "model"
+    unzipped_model_dir.mkdir(exist_ok=True)
+    with tarfile.open(model_dir, "r:gz") as tar:
+        tar.extractall(unzipped_model_dir)
+
+    with open(os.path.join(temp_dir, "model", "labels_info.json"), "r") as f:
+        labels_info = json.load(f)
+    
+    labels = [labels_info["labels"][int(cls)] for cls in classes]
+
+    return normalized_boxes, classes, labels, scores
 
 
 def run_test():
@@ -60,8 +80,8 @@ def run_test():
     image = "Black_Footed_Albatross_0032_796115.jpg"
     response = query(predictor, image)
 
-    nbb, cls, scr = parse_response(response)
-    print(cls)
+    nbb, cls, lb, scr = parse_response(response)
+    print(nbb)
 
 
 if __name__ == "__main__":
