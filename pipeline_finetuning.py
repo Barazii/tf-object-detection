@@ -24,8 +24,8 @@ def run_pipeline():
     image_uri = "482497089777.dkr.ecr.eu-north-1.amazonaws.com/opencv:latest"
     processor = ScriptProcessor(
         image_uri=image_uri,
-        instance_type=os.environ["PROCESSING_JOB_INSTANCE_TYPE"],
-        instance_count=int(os.environ["PROCESSING_JOB_INSTANCE_COUNT"]),
+        instance_type=os.environ["PROCESSING_INSTANCE_TYPE"],
+        instance_count=int(os.environ["PROCESSING_INSTANCE_COUNT"]),
         role=os.environ["SM_EXEC_ROLE"],
         sagemaker_session=sagemaker_session,
         env={

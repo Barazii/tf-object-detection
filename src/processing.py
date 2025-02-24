@@ -2,6 +2,7 @@ import cv2
 import pandas as pd
 import os
 from pathlib import Path
+import json
 
 
 SAMPLE_CLASSES = [17, 36, 73]
@@ -50,11 +51,11 @@ def processing(pc_base_dir):
     )
 
     # merge all the metadata into one dataframe
-    images_df = images_df.reset_index()
+    # images_df = images_df.reset_index()
     full_df = pd.merge(images_df, image_class_labels_df, on="id")
     full_df = pd.merge(full_df, sizes_df, on="id")
     full_df = pd.merge(full_df, bboxes_df, on="id")
-    full_df.sort_values(by=["index"], inplace=True)
+    # full_df.sort_values(by=["index"], inplace=True)
 
     # Define the bounding boxes in the format required by SageMaker's built in Object Detection algorithm.
     # the xmin/ymin/xmax/ymax parameters are specified as ratios to the total image pixel size
@@ -62,6 +63,12 @@ def processing(pc_base_dir):
     full_df["xmax"] = (full_df["x_abs"] + full_df["bbox_width"]) / full_df["width"]
     full_df["ymin"] = full_df["y_abs"] / full_df["height"]
     full_df["ymax"] = (full_df["y_abs"] + full_df["bbox_height"]) / full_df["height"]
+
+    # drop the columns that are not needed
+    full_df.drop(
+        columns=["x_abs", "y_abs", "bbox_width", "bbox_height"],
+        inplace=True,
+    )
 
     # small subset of species to reduce resources consumption
     smaple_classes = list(map(int, os.environ["SAMPLE_CLASSES"].split(",")))
@@ -77,8 +84,38 @@ def processing(pc_base_dir):
     valid_dir = pc_base_dir / "validation"
     valid_dir.mkdir(exist_ok=True)
 
-    train_df.to_csv(train_dir / "train.csv", index=False)
-    test_df.to_csv(valid_dir / "validation.csv", index=False)
+    # now we have right data. we just put them in the json file as required.
+    def create_json_dict(df):
+        json_dict = {"images": [], "annotations": []}
+        for _, row in df.iterrows():
+            # image info
+            image_info = {
+                "file_name": row["image_file_name"],
+                "height": int(row["height"]),
+                "width": int(row["width"]),
+                "id": int(row["id"]),
+            }
+            json_dict["images"].append(image_info)
+
+            # annotation info
+            bbox = [
+                float(row["xmin"]),
+                float(row["ymin"]),
+                float(row["xmax"]),
+                float(row["ymax"]),
+            ]
+            annotation = {
+                "image_id": int(row["id"]),
+                "bbox": bbox,
+                "category_id": int(row["class_id"]),
+            }
+            json_dict["annotations"].append(annotation)
+        return json_dict
+
+    with open(train_dir / "train.json", "w") as f:
+        json.dump(create_json_dict(train_df), f)
+    with open(valid_dir / "validation.json", "w") as f:
+        json.dump(create_json_dict(test_df), f)
 
 
 if __name__ == "__main__":
