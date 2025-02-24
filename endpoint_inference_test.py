@@ -46,10 +46,10 @@ def parse_response(query_response):
     temp_dir = tempfile.mkdtemp()
     model_dir = os.path.join(temp_dir, "model.tar.gz")
     subprocess.run(
-            ["aws", "s3", "cp", os.environ["S3_MODEL_URI"], model_dir, "--quiet"],
-            check=True,
-        )
-    
+        ["aws", "s3", "cp", os.environ["S3_MODEL_URI"], model_dir, "--quiet"],
+        check=True,
+    )
+
     unzipped_model_dir = Path(temp_dir) / "model"
     unzipped_model_dir.mkdir(exist_ok=True)
     with tarfile.open(model_dir, "r:gz") as tar:
@@ -57,19 +57,50 @@ def parse_response(query_response):
 
     with open(os.path.join(temp_dir, "model", "labels_info.json"), "r") as f:
         labels_info = json.load(f)
-    
+
     labels = [labels_info["labels"][int(cls)] for cls in classes]
 
-    return normalized_boxes, classes, labels, scores
+    return normalized_boxes, labels, scores
+
+
+import matplotlib.patches as patches
+from matplotlib import pyplot as plt
+from PIL import Image
+from PIL import ImageColor
+import numpy as np
+import time
+
+
+def display_predictions(img_jpg, normalized_boxes, classes_names, confidences, output_path):
+    colors = list(ImageColor.colormap.values())
+    image_np = np.array(Image.open(img_jpg))
+    plt.figure(figsize=(20, 20))
+    ax = plt.axes()
+    ax.imshow(image_np)
+
+    for idx in range(len(normalized_boxes)):
+        left, bot, right, top = normalized_boxes[idx]
+        x, w = [val * image_np.shape[1] for val in [left, right - left]]
+        y, h = [val * image_np.shape[0] for val in [bot, top - bot]]
+        color = colors[hash(classes_names[idx]) % len(colors)]
+        rect = patches.Rectangle(
+            (x, y), w, h, linewidth=3, edgecolor=color, facecolor="none"
+        )
+        ax.add_patch(rect)
+        ax.text(
+            x,
+            y,
+            "{} {:.0f}%".format(classes_names[idx], confidences[idx] * 100),
+            bbox=dict(facecolor="white", alpha=0.5),
+        )
+
+    plt.savefig(f"{output_path}/predictions_{int(time.time())}.png")
 
 
 def run_test():
     dotenv.load_dotenv()
-    # SageMaker session setup
-    role = os.environ["SM_EXEC_ROLE"]
     sagemaker_session = sagemaker.Session()
 
-    # Replace with your endpoint name
     predictor = Predictor(
         endpoint_name=os.environ["ENDPOINT_NAME"],
         sagemaker_session=sagemaker_session,
@@ -77,11 +108,16 @@ def run_test():
         deserializer=JSONDeserializer(),
     )
 
-    image = "Black_Footed_Albatross_0032_796115.jpg"
-    response = query(predictor, image)
-
-    nbb, cls, lb, scr = parse_response(response)
-    print(nbb)
+    # test images
+    input_images_path = "test_input_images"
+    output_path = "test_output_images"
+    os.makedirs(output_path, exist_ok=True)
+    for image in os.listdir(input_images_path):
+        if image.lower().endswith((".jpg", ".jpeg")):
+            image_path = os.path.join(input_images_path, image)
+            response = query(predictor, image_path)
+            nbb, lb, scr = parse_response(response)
+            display_predictions(image_path, nbb, lb, scr, output_path)
 
 
 if __name__ == "__main__":
