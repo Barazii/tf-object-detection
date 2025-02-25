@@ -3,9 +3,7 @@ import pandas as pd
 import os
 from pathlib import Path
 import json
-
-
-SAMPLE_CLASSES = [17, 36, 73]
+import shutil
 
 
 def split_to_train_test(df, label_column, train_frac=0.8):
@@ -116,6 +114,23 @@ def processing(pc_base_dir):
         json.dump(create_json_dict(train_df), f)
     with open(valid_dir / "validation.json", "w") as f:
         json.dump(create_json_dict(test_df), f)
+
+    # model input feed directory
+    model_input_dir = pc_base_dir / "model_input_feed"
+    model_input_dir.mkdir(exist_ok=True)
+    images_dir = model_input_dir / "images"
+    images_dir.mkdir(exist_ok=True)
+
+    # put the images
+    source_dir = pc_base_dir / "dataset" / "images"
+    for image_file in train_df["image_file_name"]:
+        src_path = source_dir / image_file
+        dst_path = images_dir / image_file
+        print(f"Checking: {src_path} → {dst_path}")  # Debugging line
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_path, dst_path)
+    # put the json file
+    shutil.copy2(train_dir / "train.json", model_input_dir / "train.json")
 
 
 if __name__ == "__main__":

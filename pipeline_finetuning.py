@@ -65,6 +65,13 @@ def run_pipeline():
                 ),
                 output_name="validation",
             ),
+            ProcessingOutput(
+                source=os.path.join(os.environ["PC_BASE_DIR"], "model_input_feed"),
+                destination=os.path.join(
+                    os.environ["S3_PROJECT_URI"], "processing-step/model_input_feed"
+                ),
+                output_name="model_input_feed",
+            ),
         ],
         code="src/processing.py",
         cache_config=cache_config,
