@@ -83,12 +83,12 @@ def processing(pc_base_dir):
     valid_dir.mkdir(exist_ok=True)
 
     # now we have right data. we just put them in the json file as required.
-    def create_json_dict(df):
+    def create_json_dict(df, classes_mapping):
         json_dict = {"images": [], "annotations": []}
         for _, row in df.iterrows():
             # image info
             image_info = {
-                "file_name": row["image_file_name"],
+                "file_name": row["image_file_name"].split("/")[-1],
                 "height": int(row["height"]),
                 "width": int(row["width"]),
                 "id": int(row["id"]),
@@ -105,32 +105,34 @@ def processing(pc_base_dir):
             annotation = {
                 "image_id": int(row["id"]),
                 "bbox": bbox,
-                "category_id": int(row["class_id"]),
+                "category_id": int(classes_mapping[row["class_id"]][0]),
             }
             json_dict["annotations"].append(annotation)
         return json_dict
 
-    with open(train_dir / "train.json", "w") as f:
-        json.dump(create_json_dict(train_df), f)
-    with open(valid_dir / "validation.json", "w") as f:
-        json.dump(create_json_dict(test_df), f)
+    # fetch classes mapping
+    mapping_dir = pc_base_dir / "classes_mapping" / "classes_mapping.json"
+    with open(mapping_dir, "r") as f:
+        classes_mapping = json.load(f)
+    classes_mapping = {int(k): v for k, v in classes_mapping.items()}
+    with open(train_dir / "annotations.json", "w") as f:
+        json.dump(create_json_dict(train_df, classes_mapping), f)
+    with open(valid_dir / "annotations.json", "w") as f:
+        json.dump(create_json_dict(test_df, classes_mapping), f)
 
     # model input feed directory
     model_input_dir = pc_base_dir / "model_input_feed"
     model_input_dir.mkdir(exist_ok=True)
     images_dir = model_input_dir / "images"
     images_dir.mkdir(exist_ok=True)
-
     # put the images
     source_dir = pc_base_dir / "dataset" / "images"
     for image_file in train_df["image_file_name"]:
         src_path = source_dir / image_file
-        dst_path = images_dir / image_file
-        print(f"Checking: {src_path} → {dst_path}")  # Debugging line
-        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        dst_path = images_dir / image_file.split("/")[-1]
         shutil.copy2(src_path, dst_path)
     # put the json file
-    shutil.copy2(train_dir / "train.json", model_input_dir / "train.json")
+    shutil.copy2(train_dir / "annotations.json", model_input_dir / "annotations.json")
 
 
 if __name__ == "__main__":
