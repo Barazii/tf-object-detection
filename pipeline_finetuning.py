@@ -223,7 +223,7 @@ def run_pipeline():
         name="transfer-learning",
         step_args=estimator.fit(
             inputs={
-                "train": TrainingInput(
+                "training": TrainingInput(
                     s3_data=processing_step.properties.ProcessingOutputConfig.Outputs[
                         "model_input_feed"
                     ].S3Output.S3Uri,
