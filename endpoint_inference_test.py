@@ -1,6 +1,5 @@
 import sagemaker
 import dotenv
-from sagemaker import get_execution_role
 from sagemaker.predictor import Predictor
 from sagemaker.serializers import IdentitySerializer
 from sagemaker.deserializers import JSONDeserializer
@@ -27,9 +26,6 @@ def query(model_predictor, image_file_name):
 
 
 def parse_response(query_response):
-    # with open("query_response.json", "w") as outfile:
-    #     json.dump(model_predictions, outfile)
-
     normalized_boxes, classes, scores = (
         query_response["normalized_boxes"],
         query_response["classes"],
@@ -46,7 +42,7 @@ def parse_response(query_response):
     temp_dir = tempfile.mkdtemp()
     model_dir = os.path.join(temp_dir, "model.tar.gz")
     subprocess.run(
-        ["aws", "s3", "cp", os.environ["S3_MODEL_URI"], model_dir, "--quiet"],
+        ["aws", "s3", "cp", os.environ["S3_PRETRAINED_MODEL_URI"], model_dir, "--quiet"],
         check=True,
     )
 
