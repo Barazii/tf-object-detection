@@ -16,6 +16,7 @@ import json
 import subprocess
 from pathlib import Path
 import pandas as pd
+import shutil
 
 
 def run_pipeline():
@@ -49,6 +50,7 @@ def run_pipeline():
     s3.upload_file(
         mapping_dir, os.environ["S3_BUCKET_NAME"], "finetuning/classes_mapping.json"
     )
+    shutil.rmtree(tmp_dir)
 
     # define the processor
     image_uri = "482497089777.dkr.ecr.eu-north-1.amazonaws.com/opencv:latest"
@@ -154,10 +156,9 @@ def run_pipeline():
         num_classes = 0
         with open(labels_json_file, "r+") as f:
             labels_dicttionary = json.load(f)
-            labels_dicttionary["labels"] = (
-                [v[-1] for _, v in classes_mapping.items()]
-                + labels_dicttionary["labels"]
-            )
+            labels_dicttionary["labels"] = [
+                v[-1] for _, v in classes_mapping.items()
+            ] + labels_dicttionary["labels"]
             f.seek(0)
             json.dump(labels_dicttionary, f)
             f.truncate()
@@ -214,7 +215,7 @@ def run_pipeline():
         input_mode="File",
         base_job_name=training_job_name,
         sagemaker_session=sagemaker_session,
-        output_path=os.path.join(os.environ["S3_PROJECT_URI"], "finetuning/output"),
+        output_path=os.environ["S3_FINETUNING_OUTPUT_URI"],
         hyperparameters=hp,
         metric_definitions=training_metric_definitions,
     )
@@ -233,15 +234,69 @@ def run_pipeline():
             },
         ),
         cache_config=cache_config,
+        depends_on=[processing_step],
+    )
+
+    # create a sagemaker model instance out of the finetuned model
+    image_uri = image_uris.retrieve(
+        region=os.environ["AWS_REGION"],
+        framework=None,
+        image_scope="inference",
+        model_id=os.environ["MODEL_ID"],
+        model_version=os.environ["MODEL_VERSION"],
+        instance_type=os.environ["INFERENCE_INSTANCE_TYPE"],
+    )
+    sourcedir_uri = script_uris.retrieve(
+        model_id=os.environ["MODEL_ID"],
+        model_version=os.environ["MODEL_VERSION"],
+        script_scope="inference",
+    )
+    tmp_dir = Path(tempfile.mkdtemp())
+    sourcedir = tmp_dir / "sourcedir"
+    sourcedir.mkdir(exist_ok=True)
+    subprocess.run(
+        [
+            "aws",
+            "s3",
+            "cp",
+            sourcedir_uri,
+            f"{sourcedir}/",
+        ],
+        check=True,
+    )
+    s3.upload_file(
+        f"{sourcedir}/sourcedir.tar.gz",
+        os.environ["S3_BUCKET_NAME"],
+        "finetuning/sourcedir/sourcedir.tar.gz",
+    )
+
+    from sagemaker.model import Model
+
+    model = Model(
+        image_uri=image_uri,
+        source_dir=os.path.join(
+            os.environ["S3_PROJECT_URI"], "finetuning/sourcedir/sourcedir.tar.gz"
+        ),
+        model_data=training_step.properties.ModelArtifacts.S3ModelArtifacts,
+        entry_point="inference.py",
+        role=os.environ["SM_EXEC_ROLE"],
+        name="tf-birds-detection-finetuned-model",
+        code_location=os.environ["S3_FINETUNING_OUTPUT_URI"],
+        sagemaker_session=sagemaker_session,
+    )
+
+    from sagemaker.workflow.model_step import ModelStep
+
+    model_step = ModelStep(
+        name="create-model",
+        step_args=model.create(instance_type=os.environ["PROCESSING_INSTANCE_TYPE"]),
+        depends_on=[training_step],
     )
 
     # build the pipeline
     pipeline = Pipeline(
         name="tf-birds-detection-pipeline",
-        steps=[
-            processing_step,
-            training_step,
-        ],
+        steps=[processing_step, training_step, model_step],
         sagemaker_session=sagemaker_session,
     )
 
