@@ -66,7 +66,7 @@ def run_pipeline():
         entry_point="inference.py",
         role=os.environ["SM_EXEC_ROLE"],
         predictor_cls=Predictor,
-        name="tf-birds-detection-model",
+        name="tf-birds-detection-pretrained-model",
         code_location=os.environ["S3_PRETRAINED_OUTPUT_URI"],
     )
 
