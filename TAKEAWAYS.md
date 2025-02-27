@@ -1,0 +1,1 @@
+Bad approach to deploy pretrained models from a pipeline-like standalone script.\
