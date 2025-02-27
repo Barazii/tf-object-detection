@@ -83,7 +83,7 @@ def processing(pc_base_dir):
     valid_dir.mkdir(exist_ok=True)
 
     # now we have right data. we just put them in the json file as required.
-    def create_json_dict(df, classes_mapping):
+    def create_json_dict(df):
         json_dict = {"images": [], "annotations": []}
         for _, row in df.iterrows():
             # image info
@@ -105,23 +105,18 @@ def processing(pc_base_dir):
             annotation = {
                 "image_id": int(row["id"]),
                 "bbox": bbox,
-                "category_id": int(classes_mapping[row["class_id"]][0]),
+                "category_id": int(row["class_id"]),
             }
             json_dict["annotations"].append(annotation)
         return json_dict
 
-    # fetch classes mapping
-    mapping_dir = pc_base_dir / "classes_mapping" / "classes_mapping.json"
-    with open(mapping_dir, "r") as f:
-        classes_mapping = json.load(f)
-    classes_mapping = {int(k): v for k, v in classes_mapping.items()}
     with open(train_dir / "annotations.json", "w") as f:
-        json.dump(create_json_dict(train_df, classes_mapping), f)
+        json.dump(create_json_dict(train_df), f)
     with open(valid_dir / "annotations.json", "w") as f:
-        json.dump(create_json_dict(test_df, classes_mapping), f)
+        json.dump(create_json_dict(test_df), f)
 
     # model input feed directory
-    model_input_dir = pc_base_dir / "model_input_feed"
+    model_input_dir = pc_base_dir / "finetuning_input"
     model_input_dir.mkdir(exist_ok=True)
     images_dir = model_input_dir / "images"
     images_dir.mkdir(exist_ok=True)

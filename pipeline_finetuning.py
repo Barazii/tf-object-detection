@@ -28,30 +28,6 @@ def run_pipeline():
         default_bucket=os.environ["S3_BUCKET_NAME"],
     )
 
-    # create the classes mapping
-    classes_id = list(map(int, os.environ["SAMPLE_CLASSES"].split(",")))
-    s3 = boto3.client("s3")
-    tmp_dir = Path(tempfile.mkdtemp())
-    classes_dir = tmp_dir / "classes.txt"
-    s3.download_file(
-        os.environ["S3_BUCKET_NAME"],
-        "dataset/classes.txt",
-        classes_dir,
-    )
-    classes_df = pd.read_csv(classes_dir, sep=" ", names=["id", "class"], header=None)
-    classes_mapping = {}
-    for i, class_id in enumerate(classes_id):
-        class_name = classes_df[classes_df["id"] == class_id]["class"].values[0]
-        class_name = class_name.split(".")[-1]
-        classes_mapping[class_id] = (i, class_name)
-    mapping_dir = tmp_dir / "classes_mapping.json"
-    with open(mapping_dir, "w") as f:
-        json.dump(classes_mapping, f)
-    s3.upload_file(
-        mapping_dir, os.environ["S3_BUCKET_NAME"], "finetuning/classes_mapping.json"
-    )
-    shutil.rmtree(tmp_dir)
-
     # define the processor
     image_uri = "482497089777.dkr.ecr.eu-north-1.amazonaws.com/opencv:latest"
     processor = ScriptProcessor(
@@ -78,13 +54,6 @@ def run_pipeline():
                 source=os.path.join(os.environ["S3_PROJECT_URI"], "dataset"),
                 destination=os.path.join(os.environ["PC_BASE_DIR"], "dataset"),
                 input_name="dataset",
-                s3_data_type="S3Prefix",
-                s3_input_mode="File",
-            ),
-            ProcessingInput(
-                source=os.environ["S3_FINETUNING_CLASSES_MAPPING_URI"],
-                destination=os.path.join(os.environ["PC_BASE_DIR"], "classes_mapping"),
-                input_name="classes_mapping",
                 s3_data_type="S3Prefix",
                 s3_input_mode="File",
             ),
