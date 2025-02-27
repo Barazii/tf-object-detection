@@ -4,11 +4,13 @@ from sagemaker.predictor import Predictor
 from sagemaker.serializers import IdentitySerializer
 from sagemaker.deserializers import JSONDeserializer
 import os
-import subprocess
 import tempfile
 import tarfile
 import json
 from pathlib import Path
+import time
+import boto3
+import pandas as pd
 
 
 def query(model_predictor, image_file_name):
@@ -32,29 +34,45 @@ def parse_response(query_response):
         query_response["scores"],
     )
     # take predictions with scores >= 0.5 only
-    high_confidence_mask = [score >= 0.5 for score in scores]
+    high_confidence_mask = [score >= 0.3 for score in scores]
     normalized_boxes = [
         box for box, keep in zip(normalized_boxes, high_confidence_mask) if keep
     ]
     classes = [cls for cls, keep in zip(classes, high_confidence_mask) if keep]
     scores = [score for score, keep in zip(scores, high_confidence_mask) if keep]
 
+    # labels info and classes mapping for reporting
+    s3 = boto3.client("s3")
     temp_dir = tempfile.mkdtemp()
     model_dir = os.path.join(temp_dir, "model.tar.gz")
-    subprocess.run(
-        ["aws", "s3", "cp", os.environ["S3_PRETRAINED_MODEL_URI"], model_dir, "--quiet"],
-        check=True,
+    response = s3.list_objects(
+        Bucket=os.environ["S3_BUCKET_NAME"], Prefix="finetuning/output"
     )
-
-    unzipped_model_dir = Path(temp_dir) / "model"
-    unzipped_model_dir.mkdir(exist_ok=True)
+    for dic in response["Contents"]:
+        if dic["Key"].endswith(".tar.gz"):
+            s3.download_file(os.environ["S3_BUCKET_NAME"], dic["Key"], model_dir)
+            break
     with tarfile.open(model_dir, "r:gz") as tar:
-        tar.extractall(unzipped_model_dir)
-
-    with open(os.path.join(temp_dir, "model", "labels_info.json"), "r") as f:
+        tar.extractall(temp_dir)
+    with open(os.path.join(temp_dir, "labels_info.json"), "r") as f:
         labels_info = json.load(f)
+    classes_id = list(map(int, os.environ["SAMPLE_CLASSES"].split(",")))
+    tmp_dir = Path(tempfile.mkdtemp())
+    classes_dir = tmp_dir / "classes.txt"
+    s3.download_file(
+        os.environ["S3_BUCKET_NAME"],
+        "dataset/classes.txt",
+        classes_dir,
+    )
+    classes_df = pd.read_csv(classes_dir, sep=" ", names=["id", "class"], header=None)
+    classes_mapping = {}
+    for class_id in classes_id:
+        class_name = classes_df[classes_df["id"] == class_id]["class"].values[0]
+        class_name = class_name.split(".")[-1]
+        classes_mapping[class_id] = class_name
 
-    labels = [labels_info["labels"][int(cls)] for cls in classes]
+    # map
+    labels = [classes_mapping[labels_info["labels"][int(cls)]] for cls in classes]
 
     return normalized_boxes, labels, scores
 
@@ -67,7 +85,9 @@ import numpy as np
 import time
 
 
-def display_predictions(img_jpg, normalized_boxes, classes_names, confidences, output_path):
+def display_predictions(
+    img_jpg, normalized_boxes, classes_names, confidences, output_path
+):
     colors = list(ImageColor.colormap.values())
     image_np = np.array(Image.open(img_jpg))
     plt.figure(figsize=(20, 20))
@@ -94,7 +114,7 @@ def display_predictions(img_jpg, normalized_boxes, classes_names, confidences, o
 
 
 def run_test():
-    dotenv.load_dotenv()
+    dotenv.load_dotenv(override=True)
     sagemaker_session = sagemaker.Session()
 
     predictor = Predictor(
@@ -112,8 +132,8 @@ def run_test():
         if image.lower().endswith((".jpg", ".jpeg")):
             image_path = os.path.join(input_images_path, image)
             response = query(predictor, image_path)
-            nbb, lb, scr = parse_response(response)
-            display_predictions(image_path, nbb, lb, scr, output_path)
+            nbb, lbl, scr = parse_response(response)
+            # display_predictions(image_path, nbb, lb, scr, output_path)
 
 
 if __name__ == "__main__":
