@@ -77,10 +77,10 @@ def processing(pc_base_dir):
     train_df, test_df = split_to_train_test(full_df, "class_id", train_frac=0.8)
 
     # save files
-    train_dir = pc_base_dir / "train"
-    train_dir.mkdir(exist_ok=True)
-    valid_dir = pc_base_dir / "validation"
-    valid_dir.mkdir(exist_ok=True)
+    # train_dir = pc_base_dir / "train"
+    # train_dir.mkdir(exist_ok=True)
+    # valid_dir = pc_base_dir / "validation"
+    # valid_dir.mkdir(exist_ok=True)
 
     # now we have right data. we just put them in the json file as required.
     def create_json_dict(df):
@@ -110,15 +110,10 @@ def processing(pc_base_dir):
             json_dict["annotations"].append(annotation)
         return json_dict
 
-    with open(train_dir / "annotations.json", "w") as f:
-        json.dump(create_json_dict(train_df), f)
-    with open(valid_dir / "annotations.json", "w") as f:
-        json.dump(create_json_dict(test_df), f)
-
     # model input feed directory
-    model_input_dir = pc_base_dir / "finetuning_input"
-    model_input_dir.mkdir(exist_ok=True)
-    images_dir = model_input_dir / "images"
+    finetuning_dir = pc_base_dir / "finetuning"
+    finetuning_dir.mkdir(exist_ok=True)
+    images_dir = finetuning_dir / "images"
     images_dir.mkdir(exist_ok=True)
     # put the images
     source_dir = pc_base_dir / "dataset" / "images"
@@ -127,7 +122,23 @@ def processing(pc_base_dir):
         dst_path = images_dir / image_file.split("/")[-1]
         shutil.copy2(src_path, dst_path)
     # put the json file
-    shutil.copy2(train_dir / "annotations.json", model_input_dir / "annotations.json")
+    with open(finetuning_dir / "annotations.json", "w") as f:
+        json.dump(create_json_dict(train_df), f)
+
+    # model input feed directory
+    valid_dir = pc_base_dir / "validation"
+    valid_dir.mkdir(exist_ok=True)
+    images_dir = valid_dir / "images"
+    images_dir.mkdir(exist_ok=True)
+    # put the images
+    source_dir = pc_base_dir / "dataset" / "images"
+    for image_file in test_df["image_file_name"]:
+        src_path = source_dir / image_file
+        dst_path = images_dir / image_file.split("/")[-1]
+        shutil.copy2(src_path, dst_path)
+    # put the json file
+    with open(valid_dir / "annotations.json", "w") as f:
+        json.dump(create_json_dict(test_df), f)
 
 
 if __name__ == "__main__":

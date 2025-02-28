@@ -70,11 +70,11 @@ def run_pipeline():
                 output_name="validation",
             ),
             ProcessingOutput(
-                source=os.path.join(os.environ["PC_BASE_DIR"], "finetuning_input"),
+                source=os.path.join(os.environ["PC_BASE_DIR"], "finetuning"),
                 destination=os.path.join(
-                    os.environ["S3_PROJECT_URI"], "finetuning/finetuning_input"
+                    os.environ["S3_PROJECT_URI"], "finetuning/input"
                 ),
-                output_name="finetuning_input",
+                output_name="finetuning",
             ),
         ],
         code="src/processing.py",
@@ -137,7 +137,7 @@ def run_pipeline():
             inputs={
                 "training": TrainingInput(
                     s3_data=processing_step.properties.ProcessingOutputConfig.Outputs[
-                        "finetuning_input"
+                        "finetuning"
                     ].S3Output.S3Uri,
                     content_type="application/x-image",
                     s3_data_type="S3Prefix",
@@ -206,10 +206,48 @@ def run_pipeline():
         depends_on=[training_step],
     )
 
+    # transformer step for evaluation
+    from sagemaker.transformer import Transformer
+    from sagemaker.workflow.steps import TransformStep
+    from sagemaker.workflow.functions import Join
+
+    transformer = Transformer(
+        model_name=model_step.properties.ModelName,
+        instance_type=os.environ["TRANSFORM_INSTANCE_TYPE"],
+        instance_count=int(os.environ["TRANSFORM_INSTANCE_COUNT"]),
+        strategy="MultiRecord",
+        accept="application/x-image",
+        assemble_with="Line",
+        output_path=os.environ["S3_TRANSFORM_OUTPUT_URI"],
+        base_transform_job_name="tf-od-transformer",
+        sagemaker_session=sagemaker_session,
+    )
+    transform_step = TransformStep(
+        name="transform-images",
+        display_name="transform images",
+        description="This step passes test images to the finetuned model to make predictions (object detections).",
+        step_args=transformer.transform(
+            job_name="tf-od-transformer",
+            data=Join(
+                on="/",
+                values=[
+                    processing_step.properties.ProcessingOutputConfig.Outputs[
+                        "validation"
+                    ].S3Output.S3Uri,
+                    "images/",
+                ],
+            ),
+            split_type="None",
+            join_source="None",
+            content_type="application/x-image",
+        ),
+        cache_config=cache_config,
+    )
+
     # build the pipeline
     pipeline = Pipeline(
         name="tf-birds-detection-pipeline",
-        steps=[processing_step, training_step, model_step],
+        steps=[processing_step, training_step, model_step, transform_step],
         sagemaker_session=sagemaker_session,
     )
 
