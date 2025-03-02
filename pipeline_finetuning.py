@@ -244,10 +244,63 @@ def run_pipeline():
         cache_config=cache_config,
     )
 
+    # evaluation step
+    sklearnprocessor = ScriptProcessor(
+        image_uri="482497089777.dkr.ecr.eu-north-1.amazonaws.com/cometml:latest",
+        role=os.environ["SM_EXEC_ROLE"],
+        instance_count=int(os.environ["PROCESSING_INSTANCE_COUNT"]),
+        instance_type=os.environ["PROCESSING_INSTANCE_TYPE"],
+        env={
+            "COMET_API_KEY": os.environ["COMET_API_KEY"],
+            "COMET_PROJECT_NAME": os.environ["COMET_PROJECT_NAME"],
+            "PC_BASE_DIR": os.environ["PC_BASE_DIR"],
+            "TRAINING_JOB_NAME": training_step.properties.TrainingJobName,
+        },
+        command=["python3"],
+    )
+
+    eval_logging_step = ProcessingStep(
+        name="evaluate-and-log",
+        processor=sklearnprocessor,
+        display_name="evaluate and log",
+        description="This step evaluates finetuned model and then logs results using mlflow.",
+        code="src/evaluation_and_logging.py",
+        cache_config=cache_config,
+        depends_on=[transform_step],
+        inputs=[
+            ProcessingInput(
+                source=os.environ["S3_TRANSFORM_OUTPUT_URI"],
+                destination="/opt/ml/processing/input/predictions",
+            ),
+            ProcessingInput(
+                source=Join(
+                    on="/",
+                    values=[
+                        processing_step.properties.ProcessingOutputConfig.Outputs[
+                            "validation"
+                        ].S3Output.S3Uri,
+                        "annotations.json",
+                    ],
+                ),
+                destination="/opt/ml/processing/input/ground_truth",
+            ),
+            ProcessingInput(
+                source=training_step.properties.ModelArtifacts.S3ModelArtifacts,
+                destination="/opt/ml/processing/input/model",
+            ),
+        ],
+    )
+
     # build the pipeline
     pipeline = Pipeline(
         name="tf-birds-detection-pipeline",
-        steps=[processing_step, training_step, model_step, transform_step],
+        steps=[
+            processing_step,
+            training_step,
+            model_step,
+            transform_step,
+            eval_logging_step,
+        ],
         sagemaker_session=sagemaker_session,
     )
 
