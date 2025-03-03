@@ -18,7 +18,7 @@ from pathlib import Path
 def run_pipeline():
     load_dotenv()
 
-    cache_config = CacheConfig(enable_caching=True, expire_after="10d")
+    cache_config = CacheConfig(enable_caching=False, expire_after="10d")
 
     sagemaker_session = PipelineSession(
         default_bucket=os.environ["S3_BUCKET_NAME"],
@@ -104,9 +104,40 @@ def run_pipeline():
         model_id=os.environ["MODEL_ID"], model_version=os.environ["MODEL_VERSION"]
     )
 
+    from sagemaker.tuner import (
+        ContinuousParameter,
+        CategoricalParameter,
+        IntegerParameter,
+    )
+
+    amt_metric_definitions = {
+        "metrics": [
+            {
+                "Name": "validation:localization_loss",
+                "Regex": "Val_localization=([0-9\\.]+)",
+            }
+        ],
+        "type": "Minimize",
+    }
+    hyperparameter_ranges = {
+        "learning_rate": ContinuousParameter(0.000001, 0.5, scaling_type="Logarithmic"),
+        "batch_size": CategoricalParameter([8, 16, 32]),
+        "optimizer": CategoricalParameter(
+            ["sgd", "adam", "rmsprop", "nesterov", "adagrad", "adadelta"]
+        ),
+        "momentum": ContinuousParameter(0.0001, 0.9, scaling_type="Logarithmic"),
+        "regularizers_l2": ContinuousParameter(
+            0.00001, 0.9, scaling_type="Logarithmic"
+        ),
+        "beta_1": ContinuousParameter(0.0001, 0.9, scaling_type="Logarithmic"),
+        "beta_2": ContinuousParameter(0.0001, 0.9, scaling_type="Logarithmic"),
+    }
+    max_jobs = 6
+    max_parallel_jobs = 2
+
     from sagemaker.utils import name_from_base
 
-    training_job_name = name_from_base("tf-birds-detection-transfer-learning")
+    training_job_name = name_from_base("tf-birds-detection-transfer-learning-hpo")
 
     training_metric_definitions = [
         {"Name": "val_localization_loss", "Regex": "Val_localization=([0-9\\.]+)"},
@@ -126,14 +157,28 @@ def run_pipeline():
         input_mode="File",
         base_job_name=training_job_name,
         sagemaker_session=sagemaker_session,
-        output_path=os.environ["S3_FINETUNING_OUTPUT_URI"],
+        # output_path=os.environ["S3_FINETUNING_OUTPUT_URI"],
         hyperparameters=hp,
         metric_definitions=training_metric_definitions,
     )
 
-    training_step = TrainingStep(
-        name="transfer-learning",
-        step_args=estimator.fit(
+    from sagemaker.tuner import HyperparameterTuner
+    from sagemaker.workflow.steps import TuningStep
+
+    hp_tuner = HyperparameterTuner(
+        estimator,
+        amt_metric_definitions["metrics"][0]["Name"],
+        hyperparameter_ranges,
+        amt_metric_definitions["metrics"],
+        max_jobs=max_jobs,
+        max_parallel_jobs=max_parallel_jobs,
+        objective_type=amt_metric_definitions["type"],
+        base_tuning_job_name=training_job_name,
+    )
+
+    tuning_step = TuningStep(
+        name="transfer-learning-hpo",
+        step_args=hp_tuner.fit(
             inputs={
                 "training": TrainingInput(
                     s3_data=processing_step.properties.ProcessingOutputConfig.Outputs[
@@ -147,6 +192,23 @@ def run_pipeline():
         cache_config=cache_config,
         depends_on=[processing_step],
     )
+
+    # training_step = TrainingStep(
+    #     name="tratraining_stepnsfer-learning",
+    #     step_args=estimator.fit(
+    #         inputs={
+    #             "training": TrainingInput(
+    #                 s3_data=processing_step.properties.ProcessingOutputConfig.Outputs[
+    #                     "finetuning"
+    #                 ].S3Output.S3Uri,
+    #                 content_type="application/x-image",
+    #                 s3_data_type="S3Prefix",
+    #             ),
+    #         },
+    #     ),
+    #     cache_config=cache_config,
+    #     depends_on=[processing_step],
+    # )
 
     # create a sagemaker model instance out of the finetuned model to be deployed for inference
     image_uri = image_uris.retrieve(
@@ -190,11 +252,14 @@ def run_pipeline():
         source_dir=os.path.join(
             os.environ["S3_PROJECT_URI"], "finetuning/sourcedir/sourcedir.tar.gz"
         ),
-        model_data=training_step.properties.ModelArtifacts.S3ModelArtifacts,
+        model_data=tuning_step.get_top_model_s3_uri(
+            top_k=0, s3_bucket=os.environ["S3_BUCKET_NAME"]
+        ),
+        # model_data=training_step.properties.ModelArtifacts.S3ModelArtifacts,
         entry_point="inference.py",
         role=os.environ["SM_EXEC_ROLE"],
         name="tf-birds-detection-finetuned-model",
-        code_location=os.environ["S3_FINETUNING_OUTPUT_URI"],
+        # code_location=os.environ["S3_FINETUNING_OUTPUT_URI"],
         sagemaker_session=sagemaker_session,
     )
 
@@ -203,7 +268,7 @@ def run_pipeline():
     model_step = ModelStep(
         name="create-model",
         step_args=model.create(instance_type=os.environ["PROCESSING_INSTANCE_TYPE"]),
-        depends_on=[training_step],
+        depends_on=[tuning_step],
     )
 
     # transformer step for evaluation
@@ -254,7 +319,8 @@ def run_pipeline():
             "COMET_API_KEY": os.environ["COMET_API_KEY"],
             "COMET_PROJECT_NAME": os.environ["COMET_PROJECT_NAME"],
             "PC_BASE_DIR": os.environ["PC_BASE_DIR"],
-            "TRAINING_JOB_NAME": training_step.properties.TrainingJobName,
+            "TRAINING_JOB_NAME": tuning_step.properties.BestTrainingJob.TrainingJobName,
+            # "TRAINING_JOB_NAME": training_step.properties.TrainingJobName
         },
         command=["python3"],
     )
@@ -263,10 +329,10 @@ def run_pipeline():
         name="evaluate-and-log",
         processor=sklearnprocessor,
         display_name="evaluate and log",
-        description="This step evaluates finetuned model and then logs results using mlflow.",
+        description="This step evaluates finetuned model and then logs results using cometml.",
         code="src/evaluation_and_logging.py",
         cache_config=cache_config,
-        depends_on=[transform_step],
+        depends_on=[transform_step, tuning_step],
         inputs=[
             ProcessingInput(
                 source=os.environ["S3_TRANSFORM_OUTPUT_URI"],
@@ -285,7 +351,10 @@ def run_pipeline():
                 destination="/opt/ml/processing/input/ground_truth",
             ),
             ProcessingInput(
-                source=training_step.properties.ModelArtifacts.S3ModelArtifacts,
+                source=tuning_step.get_top_model_s3_uri(
+                    top_k=0, s3_bucket=os.environ["S3_BUCKET_NAME"]
+                ),
+                # source=training_step.properties.ModelArtifacts.S3ModelArtifacts,
                 destination="/opt/ml/processing/input/model",
             ),
         ],
@@ -295,10 +364,11 @@ def run_pipeline():
     pipeline = Pipeline(
         name="tf-birds-detection-pipeline",
         steps=[
-            processing_step,
-            training_step,
-            model_step,
-            transform_step,
+            # processing_step,
+            # tuning_step,
+            # training_step,
+            # model_step,
+            # transform_step,
             eval_logging_step,
         ],
         sagemaker_session=sagemaker_session,
