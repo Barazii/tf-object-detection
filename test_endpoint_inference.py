@@ -41,7 +41,8 @@ def parse_response(query_response, classes_mapping, labels_info):
     classes = [cls for cls, keep in zip(classes, high_confidence_mask) if keep]
     scores = [score for score, keep in zip(scores, high_confidence_mask) if keep]
     # map
-    labels = [classes_mapping[labels_info["labels"][int(cls)]] for cls in classes]
+    # labels = [classes_mapping[labels_info["labels"][int(cls)]] for cls in classes]
+    labels = [labels_info["labels"][int(cls)] for cls in classes]
 
     return normalized_boxes, labels, scores
 
