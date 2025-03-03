@@ -27,7 +27,7 @@ def query(model_predictor, image_file_name):
     return query_response
 
 
-def parse_response(query_response):
+def parse_response(query_response, classes_mapping, labels_info):
     normalized_boxes, classes, scores = (
         query_response["normalized_boxes"],
         query_response["classes"],
@@ -40,37 +40,6 @@ def parse_response(query_response):
     ]
     classes = [cls for cls, keep in zip(classes, high_confidence_mask) if keep]
     scores = [score for score, keep in zip(scores, high_confidence_mask) if keep]
-
-    # labels info and classes mapping for reporting
-    s3 = boto3.client("s3")
-    temp_dir = tempfile.mkdtemp()
-    model_dir = os.path.join(temp_dir, "model.tar.gz")
-    response = s3.list_objects(
-        Bucket=os.environ["S3_BUCKET_NAME"], Prefix="finetuning/output"
-    )
-    for dic in response["Contents"]:
-        if dic["Key"].endswith(".tar.gz"):
-            s3.download_file(os.environ["S3_BUCKET_NAME"], dic["Key"], model_dir)
-            break
-    with tarfile.open(model_dir, "r:gz") as tar:
-        tar.extractall(temp_dir)
-    with open(os.path.join(temp_dir, "labels_info.json"), "r") as f:
-        labels_info = json.load(f)
-    classes_id = list(map(int, os.environ["SAMPLE_CLASSES"].split(",")))
-    tmp_dir = Path(tempfile.mkdtemp())
-    classes_dir = tmp_dir / "classes.txt"
-    s3.download_file(
-        os.environ["S3_BUCKET_NAME"],
-        "dataset/classes.txt",
-        classes_dir,
-    )
-    classes_df = pd.read_csv(classes_dir, sep=" ", names=["id", "class"], header=None)
-    classes_mapping = {}
-    for class_id in classes_id:
-        class_name = classes_df[classes_df["id"] == class_id]["class"].values[0]
-        class_name = class_name.split(".")[-1]
-        classes_mapping[class_id] = class_name
-
     # map
     labels = [classes_mapping[labels_info["labels"][int(cls)]] for cls in classes]
 
@@ -124,6 +93,42 @@ def run_test():
         deserializer=JSONDeserializer(),
     )
 
+    # labels info and classes mapping
+    s3 = boto3.client("s3")
+    temp_dir = tempfile.mkdtemp()
+    model_dir = os.path.join(temp_dir, "model.tar.gz")
+    endpoint_config_name = boto3.client("sagemaker").describe_endpoint(
+        EndpointName=os.environ["ENDPOINT_NAME"]
+    )["EndpointConfigName"]
+    production_variant = boto3.client("sagemaker").describe_endpoint_config(
+        EndpointConfigName=endpoint_config_name
+    )["ProductionVariants"][0]
+    model_name = production_variant["ModelName"]
+    model_info = boto3.client("sagemaker").describe_model(ModelName=model_name)
+    model_uri = model_info["PrimaryContainer"]["ModelDataUrl"]
+    s3_url_parts = model_uri.replace("s3://", "").split("/")
+    bucket_name = s3_url_parts[0]
+    key = "/".join(s3_url_parts[1:])
+    s3.download_file(bucket_name, key, model_dir)
+    with tarfile.open(model_dir, "r:gz") as tar:
+        tar.extractall(temp_dir)
+    with open(os.path.join(temp_dir, "labels_info.json"), "r") as f:
+        labels_info = json.load(f)
+    classes_id = list(map(int, os.environ["SAMPLE_CLASSES"].split(",")))
+    tmp_dir = Path(tempfile.mkdtemp())
+    classes_dir = tmp_dir / "classes.txt"
+    s3.download_file(
+        os.environ["S3_BUCKET_NAME"],
+        "dataset/classes.txt",
+        classes_dir,
+    )
+    classes_df = pd.read_csv(classes_dir, sep=" ", names=["id", "class"], header=None)
+    classes_mapping = {}
+    for class_id in classes_id:
+        class_name = classes_df[classes_df["id"] == class_id]["class"].values[0]
+        class_name = class_name.split(".")[-1]
+        classes_mapping[class_id] = class_name
+
     # test images
     input_images_path = "test_input_images"
     output_path = "test_output_images"
@@ -132,8 +137,8 @@ def run_test():
         if image.lower().endswith((".jpg", ".jpeg")):
             image_path = os.path.join(input_images_path, image)
             response = query(predictor, image_path)
-            nbb, lbl, scr = parse_response(response)
-            # display_predictions(image_path, nbb, lb, scr, output_path)
+            nbb, lbl, scr = parse_response(response, classes_mapping, labels_info)
+            display_predictions(image_path, nbb, lbl, scr, output_path)
 
 
 if __name__ == "__main__":
