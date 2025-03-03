@@ -55,12 +55,10 @@ def processing(pc_base_dir):
     full_df = pd.merge(full_df, bboxes_df, on="id")
     # full_df.sort_values(by=["index"], inplace=True)
 
-    # Define the bounding boxes in the format required by SageMaker's built in Object Detection algorithm.
-    # the xmin/ymin/xmax/ymax parameters are specified as ratios to the total image pixel size
-    full_df["xmin"] = full_df["x_abs"] / full_df["width"]
-    full_df["xmax"] = (full_df["x_abs"] + full_df["bbox_width"]) / full_df["width"]
-    full_df["ymin"] = full_df["y_abs"] / full_df["height"]
-    full_df["ymax"] = (full_df["y_abs"] + full_df["bbox_height"]) / full_df["height"]
+    full_df["xmin"] = full_df["x_abs"]
+    full_df["xmax"] = full_df["x_abs"] + full_df["bbox_width"]
+    full_df["ymin"] = full_df["y_abs"]
+    full_df["ymax"] = full_df["y_abs"] + full_df["bbox_height"]
 
     # drop the columns that are not needed
     full_df.drop(
@@ -75,12 +73,6 @@ def processing(pc_base_dir):
 
     # split the data into train and test
     train_df, test_df = split_to_train_test(full_df, "class_id", train_frac=0.8)
-
-    # save files
-    # train_dir = pc_base_dir / "train"
-    # train_dir.mkdir(exist_ok=True)
-    # valid_dir = pc_base_dir / "validation"
-    # valid_dir.mkdir(exist_ok=True)
 
     # now we have right data. we just put them in the json file as required.
     def create_json_dict(df):

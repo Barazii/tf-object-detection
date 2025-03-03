@@ -58,7 +58,7 @@ def evaluation_and_logging(pc_base_dir, exp):
     # log
     exp.log_metric("hit_rate", hit_rate)
     exp.log_model(
-        "tf_od_finetuned_model", pc_base_dir / "input" / "model" / "model.tar.gz"
+        "tf_od_finetuned_model", str(model_dir / "model.tar.gz")
     )
     exp.log_parameter("training_job_name", os.environ["TRAINING_JOB_NAME"])
 
