@@ -14,4 +14,4 @@ The pretrained model is finetuned for predicting the new birds classes.
 ![Alt Text](images/tf-od-finetuning.drawio.png)
 
 ## Final say
-This project is a failure. Object detection models can only be optimized to minimize localization error (bonding box positions around objects). Not possible to minimize class prediction error (classification). 
+Using tf ob models to classify objects is a failure. Object detection models can only be optimized to minimize localization error (bonding box positions around objects). Not possible to minimize class prediction error (classification). 

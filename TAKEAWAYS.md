@@ -1,4 +1,4 @@
 Bad approach to deploy pretrained models from a pipeline-like standalone script, notebooks better. For finetuning, pipelining good. \
 Increasing classes number in training/finetuning only consumes resources, doesn't improve model accuracy. But increasing samples number per class does improve. Economical method: use few classes for prototyping/development, then maybe include all classes.\
 Object detection models (a research model), pretrained, good detection generic birds, good localization. Finetuned with default hp, bad detection bird species, good localization. Finetuned with optimized hp (only optimization for localization possible), bad detection, good localization.\
-Small compute (1 cpu and 4BG), with no GPU, enough for test inference endpoint.\
+Small compute (1 cpu and 4GB memory), with no GPU, enough for test inference endpoint.\
